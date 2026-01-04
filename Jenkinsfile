@@ -1,98 +1,116 @@
 pipeline {
     agent any
+
     tools {
-        // Note: this should match with the tool name configured in your jenkins instance (JENKINS_URL/configureTools/)
-        maven "MVN_HOME"
-        
+        maven 'MVN_HOME'
     }
-	 environment {
-        // This can be nexus3 or nexus2
-        NEXUS_VERSION = "nexus3"
-        // This can be http or https
-        NEXUS_PROTOCOL = "http"
-        // Where your Nexus is running
-        NEXUS_URL = "18.221.189.193:8081/"
-        // Repository where we will upload the artifact
-        NEXUS_REPOSITORY = "sonarqube"
-        // Jenkins credential id to authenticate to Nexus OSS
-        NEXUS_CREDENTIAL_ID = "nexus_keygen"
-	SCANNER_HOME = tool 'sonar_scanner'
+
+    environment {
+        SONAR_PROJECT_KEY  = 'Sabear'
+        SONAR_PROJECT_NAME = 'Sabear'
+
+        NEXUS_URL  = '23.22.179.90:8081'
+        NEXUS_REPO = 'hiring-app'
+        NEXUS_CRED = 'NEXUS-SERVER'
+
+        TOMCAT_URL     = 'http://54.227.155.175:8080'
+        TOMCAT_CONTEXT = 'simplecustomerapp'
+        TOMCAT_CRED    = 'tomcat_credentials'
+
+        SLACK_CHANNEL = '#jenkins-integration'
     }
+
     stages {
-        stage("clone code") {
+
+        stage('Notify Build Started') {
             steps {
-                script {
-                    // Let's clone the source
-                    git 'https://github.com/betawins/sabear_simplecutomerapp.git';
+                slackSend(
+                    channel: SLACK_CHANNEL,
+                    color: '#439FE0',
+                    message: "🚀 *BUILD STARTED*\nJob: ${JOB_NAME}\nBuild: #${BUILD_NUMBER}\n${BUILD_URL}"
+                )
+            }
+        }
+
+        stage('Git Clone') {
+            steps {
+                git branch: 'feature-1.1',
+                    url: 'https://github.com/betawins/sabear_simplecutomerapp.git'
+            }
+        }
+
+        stage('Maven Build') {
+            steps {
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
+            steps {
+                withSonarQubeEnv('sonarqube-server') {
+                    sh '''
+                      mvn sonar:sonar \
+                      -Dsonar.projectKey=Sabear \
+                      -Dsonar.projectName=Sabear
+                    '''
                 }
             }
         }
-        stage("mvn build") {
+
+        stage('Upload WAR to Nexus') {
             steps {
-                script {
-                    // If you are using Windows then you should use "bat" step
-                    // Since unit testing is out of the scope we skip them
-                    sh 'mvn -Dmaven.test.failure.ignore=true clean install'
+                withCredentials([usernamePassword(
+                    credentialsId: NEXUS_CRED,
+                    usernameVariable: 'NEXUS_USER',
+                    passwordVariable: 'NEXUS_PASS'
+                )]) {
+                    sh '''
+                      WAR_FILE=$(ls target/*.war | head -n 1)
+
+                      curl -u $NEXUS_USER:$NEXUS_PASS \
+                      --upload-file $WAR_FILE \
+                      http://${NEXUS_URL}/repository/${NEXUS_REPO}/com/javahome/hiring/${BUILD_NUMBER}/hiring-${BUILD_NUMBER}.war
+                    '''
                 }
             }
         }
-	stage('SonarCloud') {
+
+        stage('Deploy to Tomcat') {
             steps {
-                withSonarQubeEnv('sonarqube_server') {
-				sh '$SCANNER_HOME/bin/sonar-scanner \
-				-Dsonar.projectKey=Ncodeit \
-				-Dsonar.projectName=Ncodeit \
-				-Dsonar.projectVersion=2.0 \
-				-Dsonar.sources=/var/lib/jenkins/workspace/$JOB_NAME/src/ \
-				-Dsonar.binaries=target/classes/com/visualpathit/account/controller/ \
-				-Dsonar.junit.reportsPath=target/surefire-reports \
-				-Dsonar.jacoco.reportPath=target/jacoco.exec \
-				-Dsonar.java.binaries=src/com/room/sample '
-				
-		     }
-		}
-	    }
-        stage("publish to nexus") {
-            steps {
-                script {
-                    // Read POM xml file using 'readMavenPom' step , this step 'readMavenPom' is included in: https://plugins.jenkins.io/pipeline-utility-steps
-                    pom = readMavenPom file: "pom.xml";
-                    // Find built artifact under target folder
-                    filesByGlob = findFiles(glob: "target/*.${pom.packaging}");
-                    // Print some info from the artifact found
-                    echo "${filesByGlob[0].name} ${filesByGlob[0].path} ${filesByGlob[0].directory} ${filesByGlob[0].length} ${filesByGlob[0].lastModified}"
-                    // Extract the path from the File found
-                    artifactPath = filesByGlob[0].path;
-                    // Assign to a boolean response verifying If the artifact name exists
-                    artifactExists = fileExists artifactPath;
-                    if(artifactExists) {
-                        echo "*** File: ${artifactPath}, group: ${pom.groupId}, packaging: ${pom.packaging}, version ${pom.version}";
-                        nexusArtifactUploader(
-                            nexusVersion: NEXUS_VERSION,
-                            protocol: NEXUS_PROTOCOL,
-                            nexusUrl: NEXUS_URL,
-			    groupId: pom.groupId,
-                            version: pom.version,
-                            repository: NEXUS_REPOSITORY,
-                            credentialsId: NEXUS_CREDENTIAL_ID,
-                            artifacts: [
-                                // Artifact generated such as .jar, .ear and .war files.
-                                [artifactId: pom.artifactId,
-                                classifier: '',
-                                file: artifactPath,
-                                type: pom.packaging],
-                                // Lets upload the pom.xml file for additional information for Transitive dependencies
-                                [artifactId: pom.artifactId,
-                                classifier: '',
-                                file: "pom.xml",
-                                type: "pom"]
-                            ]
-                        );
-                    } else {
-                        error "*** File: ${artifactPath}, could not be found";
-                    }
+                withCredentials([usernamePassword(
+                    credentialsId: TOMCAT_CRED,
+                    usernameVariable: 'TOMCAT_USER',
+                    passwordVariable: 'TOMCAT_PASS'
+                )]) {
+                    sh '''
+                      WAR_FILE=$(ls target/*.war | head -n 1)
+
+                      curl -u $TOMCAT_USER:$TOMCAT_PASS \
+                      -T $WAR_FILE \
+                      "${TOMCAT_URL}/manager/text/deploy?path=/${TOMCAT_CONTEXT}&update=true"
+                    '''
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            slackSend(
+                channel: SLACK_CHANNEL,
+                color: 'good',
+                message: "✅ *BUILD SUCCESS*\nJob: ${JOB_NAME}\nBuild: #${BUILD_NUMBER}"
+            )
+        }
+        failure {
+            slackSend(
+                channel: SLACK_CHANNEL,
+                color: 'danger',
+                message: "❌ *BUILD FAILED*\nJob: ${JOB_NAME}\nBuild: #${BUILD_NUMBER}"
+            )
         }
     }
 }
