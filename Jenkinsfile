@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'Maven3'
+        maven 'MVN_HOME'
     }
 
     parameters {
@@ -34,21 +34,18 @@ pipeline {
 
         stage('Build') {
             steps {
-                echo "Building ${APP_NAME}"
                 sh 'mvn clean compile'
             }
         }
 
         stage('Test') {
             steps {
-                echo "Running tests"
                 sh 'mvn test'
             }
         }
 
         stage('Package') {
             steps {
-                echo "Packaging application"
                 sh 'mvn package'
             }
         }
