@@ -1,61 +1,61 @@
 pipeline {
     agent any
+
     parameters {
-        string(name: 'BRANCH_NAME', defaultValue: 'master')
-        choice(name: 'ENV', choices: ['dev', 'qa'])
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'master',
+            description: 'Git branch to build'
+        )
+        choice(
+            name: 'ENV',
+            choices: ['dev', 'qa'],
+            description: 'Target environment'
+        )
     }
+
     environment {
         APP_NAME = 'simplecustomerapp'
     }
+
     stages {
+
         stage('Checkout') {
             steps {
+                echo "Checking out branch: ${params.BRANCH_NAME}"
                 git branch: "${params.BRANCH_NAME}",
                     url: 'https://github.com/shaikhshahbazz/sabear_simplecutomerapp.git'
             }
         }
-        stage('Verify Workspace') {
-            steps {
-                sh '''
-                    pwd
-                    ls -l
-                    echo "---- inside SimpleCustomerApp ----"
-                    cd SimpleCustomerApp
-                    pwd
-                    ls -l
-                    ls -l pom.xml
-                '''
-            }
-        }
+
         stage('Build') {
             steps {
-                dir('SimpleCustomerApp') {
-                    sh 'mvn clean compile'
-                }
+                echo "Building ${APP_NAME}"
+                sh 'mvn clean compile'
             }
         }
+
         stage('Test') {
             steps {
-                dir('SimpleCustomerApp') {
-                    sh 'mvn test'
-                }
+                echo "Running tests"
+                sh 'mvn test'
             }
         }
+
         stage('Package') {
             steps {
-                dir('SimpleCustomerApp') {
-                    sh 'mvn package'
-                }
+                echo "Packaging application"
+                sh 'mvn package'
             }
         }
     }
+
     post {
         success {
-            echo ":white_tick: BUILD SUCCESS for ${APP_NAME} in ${params.ENV}"
-            sh 'ls -l SimpleCustomerApp/target/'
+            echo "BUILD SUCCESSFUL for ${APP_NAME} in ${params.ENV} environment"
         }
         failure {
-            echo ":x: BUILD FAILED for ${APP_NAME}"
+            echo "BUILD FAILED for ${APP_NAME}"
         }
     }
 }
